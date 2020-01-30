@@ -1,7 +1,7 @@
 class Link:
     def __init__(self, start, end, weight, network):
-        self.firstNode = start
-        self.secondNode = end
+        self.firstNode = str(start)
+        self.secondNode = str(end)
         self.weight = weight
         self.isOk = True
         self.network = network
