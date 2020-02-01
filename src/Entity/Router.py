@@ -31,12 +31,119 @@ class Router:
         self.LOST_LINK = "LOST_LINK"
         self.LINK = "LINK"
         self.NEW_LINK = "NEW_LINK"
+        self.TYPE_ENTITY = "TYPE_ENTITY"
+        self.CLIETN_TYPE = "CLIENT_ENTITY"
+        self.ROUTER_TYPE = "ROUTER_ENTITY"
+        self.PING_TYPE = "PING_TYPE"
+        self.DES_ID = "DESINATION_ID"
+        self.routingTable = {}
+
+    def findAllNodes(self):
+        allNodes = []
+        present = []
+        for link in self.LSBD:
+            if link.firstNode not in present:
+                present.append(link.firstNode)
+                allNodes.append([link.firstNode, float("inf"), None, True])
+            if link.secondNode not in present:
+                present.append(link.secondNode)
+                allNodes.append([link.secondNode, float("inf"), None, True])
+        return allNodes
+
+    def findIndexOfNode(self, id, list):
+        for i in range(len(list)):
+            if list[i][0] == id:
+                return i
+        raise Exception("can't find")
+
+    def updateCost(self, currentNode, link, allNode):
+        if link.firstNode == currentNode:
+            targetNode = link.secondNode
+        else:
+            targetNode = link.firstNode
+        indexOfCurrentNode = self.findIndexOfNode(currentNode, allNode)
+
+        newCost = allNode[indexOfCurrentNode][1] + link.weight
+        indexOfTargetnode = self.findIndexOfNode(targetNode, allNode)
+        if allNode[indexOfTargetnode][1] > newCost:
+            allNode[indexOfTargetnode][1] = newCost
+            allNode[indexOfTargetnode][2] = currentNode
+
+
+    def createRoutingTable(self):
+        allNode = self.findAllNodes()
+        links = self.LSBD
+        currentNode = self.id
+        continueCondition = True
+        indexOfCurrentNode = self.findIndexOfNode(self.id, allNode)
+        allNode[indexOfCurrentNode][1] = 0
+        allNode[indexOfCurrentNode][3] = False
+        while continueCondition:
+            for link in links:
+                if link.firstNode == currentNode or link.secondNode == currentNode:
+                    self.updateCost(currentNode, link, allNode)
+            minIndex = -1
+            minValue = float('inf')
+            for i in range(len(allNode)):
+                if allNode[i][3] and allNode[i][1] < minValue:
+                    minValue = allNode[i][1]
+                    minIndex = i
+            if minIndex == -1:
+                continueCondition = False
+            else:
+                currentNode = allNode[minIndex][0]
+                allNode[minIndex][3] = False
+        for node in allNode:
+            self.routingTable[node[0]] = node[2]
+
+    def findNextRouter(self, id):
+        continueCondition = True
+        currentTarget = id
+        while continueCondition:
+            before = self.routingTable[currentTarget]
+            if before == None:
+                return None
+            elif before == self.id:
+                return currentTarget
+            currentTarget = before
+        raise Exception("something going wrong")
+
+    def processPingMessage(self, packet):
+        desId = packet.message[self.DES_ID]
+        self.ping(desId)
+
+    def ping(self, desId):
+        print(self.id, end=" ")
+        if self.id == desId:
+            print()
+            return
+        if desId not in self.routingTable.keys():
+            print("invalid")
+            return
+        nextRouter = self.findNextRouter(desId)
+        if nextRouter == None:
+            print("invalid")
+            return
+        link = self.network.getLink(self.id, nextRouter)
+        message = {
+            self.CATEGORY: self.PING_CATEGORY,
+            self.ID: self.id,
+            self.TYPE: self.PING_TYPE,
+            self.BODY: "Ping",
+            self.DES_ID: desId
+        }
+        packet = Packet(message, self.id, nextRouter)
+        link.sendMessageFrom(self.id, packet)
 
     def removeLink(self, srcRoutr, desRouter):
+        update = False
         for link in self.LSBD:
             if (link.firstNode == srcRoutr and link.secondNode == desRouter) or\
                     (link.firstNode == desRouter and link.secondNode == srcRoutr):
                 self.LSBD.remove(link)
+                update = True
+        if update:
+            self.createRoutingTable()
 
     def advertiseLink(self, link):
         message = {
@@ -54,15 +161,19 @@ class Router:
         link = self.findLinkToNeighbour(id)
         self.removeLink(self.id, id)
         del self.neighbours[indexInNeighbour]
-        self.advertiseLink(link)
+        if link != None:
+            self.advertiseLink(link)
 
     def increaseTime(self):
         self.timer += 1
         for i in range(len(self.neighbours)):
             self.neighbours[i][1] += 1
-        for i in range(len(self.neighbours)):
-            if self.neighbours[i][1] > 30:
+        i = 0
+        while i < len(self.neighbours):
+            if self.neighbours[i][1] >= 30:
                 self.linkLost(self.neighbours[i][0], i)
+            else:
+                i += 1
         if self.timer >= 10:
             for i in range(len(self.neighbours)):
                 message = {
@@ -72,8 +183,8 @@ class Router:
                     self.BODY: "Hello",
                     self.LSBD_STRING: self.LSBD
                 }
-                packet = Packet(message, self.id, currentNeighbourId)
                 currentNeighbourId = self.neighbours[i][0]
+                packet = Packet(message, self.id, currentNeighbourId)
                 self.sendMessageToRouter(currentNeighbourId, packet)
                 self.resetTime()
 
@@ -84,10 +195,15 @@ class Router:
         self.neighbours.append([routerId, 0])
 
     def addLinkToLSBD(self, link):
+        if link.firstNode == self.id:
+            target = link.secondNode
+        else:
+            target = link.firstNode
+        if self.notExistInNeighbour(target) and (link.firstNode == self.id or link.secondNode == self.id):
+            self.addNeighbour(target)
         self.LSBD.append(link)
 
     def connectToOther(self, link):
-        #self.updateLSBD([link], -1)
         message = {
             self.CATEGORY:self.HELLO_CATEGORY,
             self.ID: self.id,
@@ -121,10 +237,26 @@ class Router:
             self.processLostLink(packet)
         elif packet.message[self.TYPE] == self.NEW_LINK:
             self.prcoessNewLink(packet)
+        elif packet.message[self.TYPE] == self.PING_TYPE:
+            self.processPingMessage(packet)
+        else:
+            raise Exception("something is wrong 4")
 
     def prcoessNewLink(self, packet):
         link = packet.message[self.LINK]
         self.updateLSBD([link], packet.message[self.ID])
+
+    def removeFromNeigbourIfNotOnotherLink(self, link):
+        if link.firstNode != self.id and link.secondNode != self.id:
+            return
+        if link.firstNode == self.id:
+            targetRouter = link.secondNode
+        else:
+            targetRouter = link.firstNode
+        if not self.existLink(link):
+            for neighbour in self.neighbours:
+                if neighbour[0] == targetRouter:
+                    self.neighbours.remove(neighbour)
 
     def processLostLink(self, packet):
         link = packet.message[self.LINK]
@@ -132,6 +264,7 @@ class Router:
             return
         else :
             self.removeLink(link.firstNode, link.secondNode)
+        self.removeFromNeigbourIfNotOnotherLink(link)
         self.floodLostLink(link, packet.message[self.ID])
 
     def floodLostLink(self, lostLink, srcId):
@@ -155,8 +288,17 @@ class Router:
         link = self.network.getLink(self.id, desId)
         link.sendMessageFrom(self.id, packet)
 
+    def resetTimerOfNeighbour(self, id):
+        for neigbour in self.neighbours:
+            if neigbour[0] == id:
+                neigbour[1] = 0
+
+
     def processAliveMessage(self, packet):
         self.updateLSBD(packet.message[self.LSBD_STRING], packet.message[self.ID])
+        srcId = packet.message[self.ID]
+        self.resetTimerOfNeighbour(srcId)
+
 
     def notExistInNeighbour(self, idOfRouter):
         for router in self.neighbours:
@@ -165,8 +307,9 @@ class Router:
         return True
 
     def monitorInputMessage(self, packet):
-        if not self.monitoringIsOn:
+        if not self.network.monitoringIsOn:
             return
+        print(self.network.timer)
         print(str(self.id), end=" : ")
         print(packet.message[self.CATEGORY])
         print(packet.message)
@@ -235,15 +378,25 @@ class Router:
         }
         self.floodToNetwork(message, [srcId])
 
-    def updateLSBD(self, newLSBD, srcId):
+    def repairLink(self, link):
+        if self.existLink(link):
+            self.floodNewLink(link, self.id)
+        else:
+            self.updateLSBD([link], self.id)
+
+    def updateLSBD(self, newLSBD, srcId, updateRoutingTable=True):
+        update = False
         for link in newLSBD:
             if not self.existLink(link):
                 self.addLinkToLSBD(link)
+                update = True
                 self.floodNewLink(link, srcId)
+        if update and updateRoutingTable:
+            self.createRoutingTable()
 
     def processInitalShareLSBD(self, packet, link):
         newLSDB = packet.message[self.LSBD_STRING]
-        self.updateLSBD(newLSDB, packet.message[self.ID])
+        self.updateLSBD(newLSDB, packet.message[self.ID], False)
         message = {
             self.CATEGORY: self.DBD_CATEGORY,
             self.ID: self.id,
@@ -256,8 +409,9 @@ class Router:
 
     def processAckShsredLSBD(self, packet, link):
         newLSBD = packet.message[self.LSBD_STRING]
-        self.updateLSBD(newLSBD, packet.message[self.ID])
         self.updateLSBD([link], self.id)
+        self.updateLSBD(newLSBD, packet.message[self.ID])
+
 
     def existLink(self, link):
         for l in self.LSBD:

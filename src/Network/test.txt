@@ -1,0 +1,20 @@
+add router 1111
+add router 1112
+connect 1111 1112 1
+add client 1.1.1.1
+add client 1.1.1.2
+add router 1113
+add router 1114
+connect 1112 1114 1
+connect 1111 1113 2
+ping 1.1.1.1 1.1.1.2
+connect 1113 1114 1
+connect 1.1.1.1 1111 1
+connect 1.1.1.2 1114 2
+ping 1.1.1.1 1.1.1.2
+link 1112 1114 d
+ping 1.1.1.1 1.1.1.2
+sec 30
+ping 1.1.1.1 1.1.1.2
+link 1112 1114 e
+ping 1.1.1.1 1.1.1.2

@@ -6,8 +6,10 @@ class Link:
         self.isOk = True
         self.network = network
 
-    def sendMessageFrom(self, routerId, message):
+    def sendMessageFrom(self, routerId, packet):
         if not self.isOk:
+            if packet.message["type"] == "PING_TYPE":
+                print("unreachable")
             return False
         if routerId == self.firstNode:
             desRouterId = self.secondNode
@@ -16,4 +18,9 @@ class Link:
         else:
             raise Exception("something wrong in link 1!")
         desRouter = self.network.getRouter(desRouterId)
-        desRouter.processInputMessage(message, self)
+        if desRouter is not None:
+            desRouter.processInputMessage(packet, self)
+        else:
+            desClient = self.network.getClient(desRouterId)
+            if desClient is not None:
+                desClient.processInputMessage(packet, self)
